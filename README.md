@@ -11,6 +11,9 @@ This project is a real-time chat application built with Node.js, Express, and So
 - **Emoji Support**: Users can include emojis in their messages using an emoji picker.
 - **User List and Room Information**: Display of current users in the chat room and the room name.
 
+![chat app](https://github.com/shub-garg/E2E-Chat-Application-with-Encryption/assets/52582943/ffa48cdc-c24b-4c0a-95e2-ca46d914834f)
+
+
 ## Technologies Used
 
 - **Node.js**: Backend server
