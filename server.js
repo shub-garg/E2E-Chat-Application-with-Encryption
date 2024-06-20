@@ -8,7 +8,7 @@ const bodyParser = require('body-parser');
 const server = http.createServer(app);
 const io = socketio(server);
 const formatmsg = require('./utils/messages');
-const { userJoin, getCurrUser, userLeave, getRoomUsers } = require('./utils/users');
+const { userJoin, getCurrUser, userLeave, getRoomUsers, savePublicKey } = require('./utils/users');
 
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -32,6 +32,10 @@ app.get('/rooms', (req, res) => {
 });
 
 io.on('connection', socket => {
+    socket.on('publicKey', ({ username, room, publicKey }) => {
+        savePublicKey(username, publicKey);
+    });
+
     socket.on('joinRoom', ({ username, room }) => {
         const user = userJoin(socket.id, username, room);
         socket.join(user.room);
@@ -45,9 +49,16 @@ io.on('connection', socket => {
         });
     });
 
-    socket.on('chatmsg', msg => {
+    socket.on('chatmsg', (messages) => {
         const user = getCurrUser(socket.id);
-        io.to(user.room).emit('message', formatmsg(user.username, msg));
+        const userMessages = Object.entries(messages).map(([recipient, message]) => ({
+            username: user.username,
+            text: message
+        }));
+
+        userMessages.forEach(message => {
+            io.to(user.room).emit('message', message);
+        });
     });
 
     socket.on('disconnect', () => {

@@ -7,6 +7,10 @@ const emojiBtn = document.getElementById('emoji-btn');
 const emojiPicker = document.getElementById('emoji-picker');
 const msgInput = document.getElementById('msg');
 
+let publicKey;
+let privateKey;
+let recipientPublicKeys = {};
+
 // Get username and room from URL
 const { username, room } = Qs.parse(location.search, {
     ignoreQueryPrefix: true
@@ -15,27 +19,50 @@ const { username, room } = Qs.parse(location.search, {
 // Join chatroom
 socket.emit('joinRoom', { username, room });
 
+// Generate key pair and share public key
+generateKeyPair().then(() => {
+    socket.emit('publicKey', { username, room, publicKey: arrayBufferToBase64(publicKey) });
+}).catch(err => console.error('Key pair generation failed:', err));
+
 // Get room and users
 socket.on('roomUsers', ({ room, users }) => {
     outputRoomName(room);
     outputUsers(users);
+    users.forEach(user => {
+        if (user.username !== username) {
+            recipientPublicKeys[user.username] = user.publicKey;
+        }
+    });
 });
 
 // Message from server
-socket.on('message', message => {
-    outputmsg(message);
-    chatmsgs.scrollTop = chatmsgs.scrollHeight;
+socket.on('message', async message => {
+    try {
+        if (message.username !== 'Chat Bot') {
+            message.text = await decryptMessage(message.text);
+        }
+        outputmsg(message);
+        chatmsgs.scrollTop = chatmsgs.scrollHeight;
+    } catch (err) {
+        console.error('Message decryption failed:', err);
+    }
 });
 
 // Message submit
-chatForm.addEventListener('submit', (e) => {
+chatForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     // Get message text
     const msg = e.target.elements.msg.value;
 
-    // Emit message to server
-    socket.emit('chatmsg', msg);
+    // Encrypt the message for each recipient
+    try {
+        const encryptedMessages = await encryptMessageForAll(msg);
+        // Emit encrypted message to server
+        socket.emit('chatmsg', encryptedMessages);
+    } catch (err) {
+        console.error('Message encryption failed:', err);
+    }
 
     // Clear input
     e.target.elements.msg.value = '';
@@ -51,6 +78,93 @@ emojiBtn.addEventListener('click', () => {
 emojiPicker.addEventListener('emoji-click', (event) => {
     msgInput.value += event.detail.unicode;
 });
+
+// Generate key pair
+async function generateKeyPair() {
+    try {
+        const keyPair = await window.crypto.subtle.generateKey({
+            name: "RSA-OAEP",
+            modulusLength: 2048,
+            publicExponent: new Uint8Array([1, 0, 1]),
+            hash: "SHA-256"
+        }, true, ["encrypt", "decrypt"]);
+
+        publicKey = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
+        privateKey = keyPair.privateKey;
+        console.log('Key pair generated successfully.');
+    } catch (err) {
+        console.error('Key pair generation error:', err);
+        throw err;
+    }
+}
+
+// Encrypt message for all recipients
+async function encryptMessageForAll(message) {
+    const encryptedMessages = {};
+
+    for (const [username, pubKey] of Object.entries(recipientPublicKeys)) {
+        try {
+            const importedPublicKey = await window.crypto.subtle.importKey(
+                'spki',
+                base64ToArrayBuffer(pubKey),
+                {
+                    name: "RSA-OAEP",
+                    hash: "SHA-256"
+                },
+                true,
+                ["encrypt"]
+            );
+
+            const encryptedMessage = await window.crypto.subtle.encrypt(
+                {
+                    name: "RSA-OAEP"
+                },
+                importedPublicKey,
+                new TextEncoder().encode(message)
+            );
+
+            encryptedMessages[username] = arrayBufferToBase64(encryptedMessage);
+        } catch (err) {
+            console.error(`Encryption error for recipient ${username}:`, err);
+            throw err;
+        }
+    }
+
+    return encryptedMessages;
+}
+
+// Decrypt message
+async function decryptMessage(encryptedMessage) {
+    try {
+        const decryptedMessage = await window.crypto.subtle.decrypt(
+            {
+                name: "RSA-OAEP"
+            },
+            privateKey,
+            base64ToArrayBuffer(encryptedMessage)
+        );
+
+        return new TextDecoder().decode(decryptedMessage);
+    } catch (err) {
+        console.error('Decryption error:', err);
+        throw err;
+    }
+}
+
+// Utility functions
+function arrayBufferToBase64(buffer) {
+    return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+}
+
+function base64ToArrayBuffer(base64) {
+    const binaryString = atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
 
 // Output message to DOM
 function outputmsg(message) {
